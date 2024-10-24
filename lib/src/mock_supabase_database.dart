@@ -1,4 +1,57 @@
-/// A class that provides a Supabase-like interface for manipulating mock data
+/// A Supabase-client-like class to mutate the in-memory database within a rpc mocking.
+///
+/// Unlike the actual Supabase client, the `.select()`, `.insert()`, `.update()`,
+/// and `.delete()` methods is chained after the filter methods, and does not
+/// return a `Future`.
+///
+/// Example usage:
+///
+/// ```dart
+/// // Insert a single row
+/// final insertResult = db.from('users').insert({'id': 1, 'name': 'John', 'age': 30});
+/// // insertResult: [{'id': 1, 'name': 'John', 'age': 30}]
+///
+/// // Select all rows from a table
+/// final selectResult = db.from('users').select();
+/// // selectResult: [{'id': 1, 'name': 'John', 'age': 30}]
+///
+/// // Update a row
+/// final updateResult = db.from('users').eq('id', 1).update({'name': 'John Doe'});
+/// // updateResult: [{'id': 1, 'name': 'John Doe', 'age': 30}]
+///
+/// // Delete a row
+/// final deleteResult = db.from('users').eq('id', 1).delete();
+/// // deleteResult: [{'id': 1, 'name': 'John Doe', 'age': 30}]
+///
+/// // Using filters
+/// // Equal to
+/// final eqResult = db.from('users').eq('age', 30).select();
+/// // eqResult: [{'id': 1, 'name': 'John', 'age': 30}]
+///
+/// // Not equal to
+/// final neqResult = db.from('users').neq('name', 'Alice').select();
+/// // neqResult: [{'id': 1, 'name': 'John', 'age': 30}]
+///
+/// // Greater than
+/// final gtResult = db.from('users').gt('age', 25).select();
+/// // gtResult: [{'id': 1, 'name': 'John', 'age': 30}]
+///
+/// // Less than
+/// final ltResult = db.from('users').lt('age', 35).select();
+/// // ltResult: [{'id': 1, 'name': 'John', 'age': 30}]
+///
+/// // Greater than or equal to
+/// final gteResult = db.from('users').gte('age', 30).select();
+/// // gteResult: [{'id': 1, 'name': 'John', 'age': 30}]
+///
+/// // Less than or equal to
+/// final lteResult = db.from('users').lte('age', 30).select();
+/// // lteResult: [{'id': 1, 'name': 'John', 'age': 30}]
+///
+/// // Combining multiple filters
+/// final combinedResult = db.from('users').eq('name', 'John').gte('age', 30).select();
+/// // combinedResult: [{'id': 1, 'name': 'John', 'age': 30}]
+/// ```
 class MockSupabaseDatabase {
   final Map<String, List<Map<String, dynamic>>> _database;
 

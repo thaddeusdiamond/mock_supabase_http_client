@@ -95,9 +95,17 @@ void main() {
   group('filtering operations', () {
     setUp(() {
       db.from('users').insert([
-        {'id': 1, 'name': 'John', 'age': 25},
-        {'id': 2, 'name': 'Jane', 'age': 30},
-        {'id': 3, 'name': 'Bob', 'age': 20},
+        {'id': 1, 'name': 'John', 'age': 25, 'status': 'active', 'score': 100},
+        {'id': 2, 'name': 'Jane', 'age': 30, 'status': 'active', 'score': 150},
+        {'id': 3, 'name': 'Bob', 'age': 20, 'status': 'inactive', 'score': 80},
+        {'id': 4, 'name': 'Alice', 'age': 25, 'status': 'active', 'score': 120},
+        {
+          'id': 5,
+          'name': 'Charlie',
+          'age': 35,
+          'status': 'inactive',
+          'score': 90
+        },
       ]);
     });
 
@@ -109,14 +117,17 @@ void main() {
 
     test('neq filter', () {
       final result = db.from('users').neq('name', 'John').select();
-      expect(result.length, 2);
+      expect(result.length, 4);
       expect(result.every((user) => user['name'] != 'John'), true);
     });
 
     test('gt filter', () {
       final result = db.from('users').gt('age', 25).select();
-      expect(result.length, 1);
-      expect(result.first['name'], 'Jane');
+      expect(result.length, 2);
+      expect(
+        result.map((user) => user['name']).toList(),
+        containsAll(['Jane', 'Charlie']),
+      );
     });
 
     test('lt filter', () {
@@ -127,16 +138,93 @@ void main() {
 
     test('gte filter', () {
       final result = db.from('users').gte('age', 25).select();
-      expect(result.length, 2);
-      expect(result.map((user) => user['name']).toList()..sort(),
-          ['Jane', 'John']);
+      expect(result.length, 4);
+      expect(
+        result.map((user) => user['name']).toList(),
+        containsAll(['Jane', 'John', 'Alice', 'Charlie']),
+      );
     });
 
     test('lte filter', () {
       final result = db.from('users').lte('age', 25).select();
+      expect(result.length, 3);
+      expect(
+        result.map((user) => user['name']).toList(),
+        containsAll(['Bob', 'John', 'Alice']),
+      );
+    });
+
+    test('multiple filters with eq and gt', () {
+      final result =
+          db.from('users').eq('status', 'active').gt('score', 100).select();
+
       expect(result.length, 2);
       expect(
-          result.map((user) => user['name']).toList()..sort(), ['Bob', 'John']);
+          result.every(
+              (user) => user['status'] == 'active' && user['score'] > 100),
+          true);
+    });
+
+    test('multiple filters with eq and lte', () {
+      final result = db.from('users').eq('age', 25).lte('score', 120).select();
+
+      expect(result.length, 2);
+      expect(result.every((user) => user['age'] == 25 && user['score'] <= 120),
+          true);
+    });
+
+    test('multiple filters with neq and gte', () {
+      final result =
+          db.from('users').neq('status', 'active').gte('age', 20).select();
+
+      expect(result.length, 2);
+      expect(
+          result
+              .every((user) => user['status'] != 'active' && user['age'] >= 20),
+          true);
+    });
+
+    test('chaining three filters', () {
+      final result = db
+          .from('users')
+          .eq('status', 'active')
+          .gte('age', 25)
+          .lt('score', 130)
+          .select();
+
+      expect(result.length, 2);
+      expect(
+        result.map((user) => user['name']).toList(),
+        containsAll(['John', 'Alice']),
+      );
+    });
+
+    test('multiple filters with update', () {
+      final result = db
+          .from('users')
+          .eq('status', 'active')
+          .gt('score', 100)
+          .update({'status': 'premium'});
+
+      expect(result.length, 2);
+      expect(
+        result.every((user) => user['status'] == 'premium'),
+        isTrue,
+      );
+    });
+
+    test('multiple filters with delete', () {
+      final deleted =
+          db.from('users').eq('status', 'inactive').lt('score', 100).delete();
+
+      expect(deleted.length, 2);
+      expect(
+        deleted.map((user) => user['name']).toList(),
+        containsAll(['Bob', 'Charlie']),
+      );
+
+      final remaining = db.from('users').select();
+      expect(remaining.length, 3);
     });
   });
 
