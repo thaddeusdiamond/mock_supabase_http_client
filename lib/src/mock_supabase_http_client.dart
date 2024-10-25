@@ -2,15 +2,12 @@ import 'dart:convert';
 
 import 'package:http/http.dart';
 
-import 'mock_supabase_database.dart';
-
 class MockSupabaseHttpClient extends BaseClient {
   final Map<String, List<Map<String, dynamic>>> _database = {};
   final Map<
-          String,
-          dynamic Function(
-              MockSupabaseDatabase database, Map<String, dynamic>? params)>
-      _rpcFunctions = {};
+      String,
+      dynamic Function(Map<String, dynamic>? params,
+          Map<String, List<Map<String, dynamic>>> tables)> _rpcFunctions = {};
 
   MockSupabaseHttpClient();
 
@@ -20,10 +17,82 @@ class MockSupabaseHttpClient extends BaseClient {
     _rpcFunctions.clear();
   }
 
+  /// Registers a RPC function that can be called using the `rpc` method on a `Postgrest` client.
+  ///
+  /// [name] is the name of the RPC function.
+  ///
+  /// Pass the function definition of the RPC to [function]. Use the following parameters:
+  ///
+  /// [params] contains the parameters passed to the RPC function.
+  ///
+  /// [tables] contains the mock database. It's a `Map<String, List<Map<String, dynamic>>>`
+  /// where the key is `[schema].[table]` and the value is a list of rows in the table.
+  /// Use it when you need to mock a RPC function that needs to modify the data in your database.
+  ///
+  /// Example value of `tables`:
+  /// ```dart
+  /// {
+  ///   'public.users': [
+  ///     {'id': 1, 'name': 'Alice', 'email': 'alice@example.com'},
+  ///     {'id': 2, 'name': 'Bob', 'email': 'bob@example.com'},
+  ///   ],
+  ///   'public.posts': [
+  ///     {'id': 1, 'title': 'First post', 'user_id': 1},
+  ///     {'id': 2, 'title': 'Second post', 'user_id': 2},
+  ///   ],
+  /// }
+  /// ```
+  ///
+  /// Example of registering a RPC function:
+  /// ```dart
+  /// mockSupabaseHttpClient.registerRpcFunction(
+  ///   'get_status',
+  ///   (params, tables) => {'status': 'ok'},
+  /// );
+  ///
+  /// final mockSupabase = SupabaseClient(
+  ///   'https://mock.supabase.co',
+  ///   'fakeAnonKey',
+  ///   httpClient: mockSupabaseHttpClient,
+  /// );
+  ///
+  /// mockSupabase.rpc('get_status').select(); // returns {'status': 'ok'}
+  /// ```
+  ///
+  /// Example of an RPC function that modifies the data in the database:
+  /// ```dart
+  /// mockSupabaseHttpClient.registerRpcFunction(
+  ///   'update_post_title',
+  ///   (params, tables) {
+  ///     final postId = params!['id'] as int;
+  ///     final newTitle = params!['title'] as String;
+  ///     final post = tables['public.posts']!.firstWhere((post) => post['id'] == postId);
+  ///     post['title'] = newTitle;
+  ///   },
+  /// );
+  ///
+  /// final mockSupabase = SupabaseClient(
+  ///   'https://mock.supabase.co',
+  ///   'fakeAnonKey',
+  ///   httpClient: mockSupabaseHttpClient,
+  /// );
+  ///
+  /// // Insert initial data
+  /// await mockSupabase.from('posts').insert([
+  ///   {'id': 1, 'title': 'Old title'},
+  /// ]);
+  ///
+  /// // Call the RPC function
+  /// await mockSupabase.rpc('update_post_title', params: {'id': 1, 'title': 'New title'});
+  ///
+  /// // Verify that the post was modified
+  /// final posts = await mockSupabase.from('posts').select().eq('id', 1);
+  /// expect(posts.first['title'], 'New title');
+  /// ```
   void registerRpcFunction(
       String name,
-      dynamic Function(
-              MockSupabaseDatabase database, Map<String, dynamic>? params)
+      dynamic Function(Map<String, dynamic>? params,
+              Map<String, List<Map<String, dynamic>>> tables)
           function) {
     _rpcFunctions[name] = function;
   }
@@ -758,8 +827,7 @@ class MockSupabaseHttpClient extends BaseClient {
     final function = _rpcFunctions[functionName]!;
 
     try {
-      final mockDatabase = MockSupabaseDatabase(_database);
-      final result = function(mockDatabase, body);
+      final result = function(body, _database);
       return _createResponse(result, request: request);
     } catch (e) {
       return _createResponse({'error': 'RPC function execution failed: $e'},

@@ -16,10 +16,6 @@ void main() {
     );
   });
 
-  setUp(() {
-    // Additional setup goes here.
-  });
-
   tearDown(() async {
     // Reset the mock client after each test
     mockHttpClient.reset();
@@ -865,6 +861,117 @@ void main() {
   });
 
   group('RPC function tests', () {
+    setUp(() {
+      // Register RPC functions
+      mockHttpClient.registerRpcFunction(
+        'get_server_time',
+        (params, tables) => {'current_time': DateTime.now().toIso8601String()},
+      );
+
+      mockHttpClient.registerRpcFunction(
+        'calculate_sum',
+        (params, tables) =>
+            {'sum': (params!['a'] as int) + (params['b'] as int)},
+      );
+
+      mockHttpClient.registerRpcFunction(
+        'get_recent_posts',
+        (params, tables) => [
+          {'id': 1, 'title': 'Recent Post 1'},
+          {'id': 2, 'title': 'Recent Post 2'},
+        ],
+      );
+
+      mockHttpClient.registerRpcFunction(
+        'process_order',
+        (params, tables) {
+          final order = params!['order'] as Map<String, dynamic>;
+          final items = List<Map<String, dynamic>>.from(order['items']);
+          final total = items.fold<int>(
+            0,
+            (sum, item) =>
+                sum + (item['price'] as int) * (item['quantity'] as int),
+          );
+          return {
+            'processed_order': {
+              'status': 'processed',
+              'total': total,
+            }
+          };
+        },
+      );
+
+      mockHttpClient.registerRpcFunction(
+        'update_user_points',
+        (params, tables) {
+          final userId = params!['user_id'] as int;
+          final pointsToAdd = params['points_to_add'] as int;
+          final users = tables['public.users']!;
+          final userIndex = users.indexWhere((user) => user['id'] == userId);
+          if (userIndex != -1) {
+            users[userIndex]['points'] =
+                (users[userIndex]['points'] as int) + pointsToAdd;
+            return {'success': true, 'new_points': users[userIndex]['points']};
+          }
+          return {'success': false};
+        },
+      );
+
+      // Add new RPC function for custom schema
+      mockHttpClient.registerRpcFunction(
+        'update_custom_schema_user_points',
+        (params, tables) {
+          final userId = params!['user_id'] as int;
+          final pointsToAdd = params['points_to_add'] as int;
+          final users = tables['custom_schema.users']!;
+          final userIndex = users.indexWhere((user) => user['id'] == userId);
+          if (userIndex != -1) {
+            users[userIndex]['points'] =
+                (users[userIndex]['points'] as int) + pointsToAdd;
+            return {'success': true, 'new_points': users[userIndex]['points']};
+          }
+          return {'success': false};
+        },
+      );
+
+      mockHttpClient.registerRpcFunction(
+        'transfer_points_between_schemas',
+        (params, tables) {
+          final fromUserId = params!['from_user_id'] as int;
+          final toUserId = params['to_user_id'] as int;
+          final points = params['points'] as int;
+
+          // Get users from both schemas
+          final publicUsers = tables['public.users']!;
+          final customUsers = tables['custom_schema.users']!;
+
+          final fromUserIndex =
+              publicUsers.indexWhere((user) => user['id'] == fromUserId);
+          final toUserIndex =
+              customUsers.indexWhere((user) => user['id'] == toUserId);
+
+          if (fromUserIndex != -1 && toUserIndex != -1) {
+            // Check if source user has enough points
+            if (publicUsers[fromUserIndex]['points'] as int >= points) {
+              // Deduct points from source user
+              publicUsers[fromUserIndex]['points'] =
+                  (publicUsers[fromUserIndex]['points'] as int) - points;
+              // Add points to destination user
+              customUsers[toUserIndex]['points'] =
+                  (customUsers[toUserIndex]['points'] as int) + points;
+
+              return {
+                'success': true,
+                'from_user_points': publicUsers[fromUserIndex]['points'],
+                'to_user_points': customUsers[toUserIndex]['points']
+              };
+            }
+          }
+          return {'success': false};
+        },
+      );
+    });
+
     test('Call RPC function without parameters', () async {
       final result = await mockSupabase.rpc('get_server_time');
       expect(result, isA<Map<String, dynamic>>());
@@ -939,6 +1046,112 @@ void main() {
       expect(otherUser, isA<Map<String, dynamic>>());
       expect(otherUser, containsPair('name', 'Bob'));
       expect(otherUser, containsPair('points', 150));
+    });
+
+    test('Call RPC function that modifies custom schema data', () async {
+      // Insert initial data in custom schema
+      await mockSupabase.schema('custom_schema').from('users').insert([
+        {'id': 1, 'name': 'Alice', 'points': 100},
+        {'id': 2, 'name': 'Bob', 'points': 150},
+      ]);
+
+      // Call RPC function to update user points in custom schema
+      final result = await mockSupabase.rpc('update_custom_schema_user_points',
+          params: {'user_id': 1, 'points_to_add': 50});
+
+      expect(result, isA<Map<String, dynamic>>());
+      expect(result, containsPair('success', true));
+      expect(result, containsPair('new_points', 150));
+
+      // Verify the database was updated in custom schema
+      final updatedUser = await mockSupabase
+          .schema('custom_schema')
+          .from('users')
+          .select()
+          .eq('id', 1)
+          .single();
+      expect(updatedUser, isA<Map<String, dynamic>>());
+      expect(updatedUser, containsPair('name', 'Alice'));
+      expect(updatedUser, containsPair('points', 150));
+
+      // Verify other users were not affected
+      final otherUser = await mockSupabase
+          .schema('custom_schema')
+          .from('users')
+          .select()
+          .eq('id', 2)
+          .single();
+      expect(otherUser, isA<Map<String, dynamic>>());
+      expect(otherUser, containsPair('name', 'Bob'));
+      expect(otherUser, containsPair('points', 150));
+    });
+
+    test('Call RPC function that modifies data across schemas', () async {
+      // Insert initial data in public schema
+      await mockSupabase.from('users').insert([
+        {'id': 1, 'name': 'Alice', 'points': 100},
+      ]);
+
+      // Insert initial data in custom schema
+      await mockSupabase.schema('custom_schema').from('users').insert([
+        {'id': 1, 'name': 'Bob', 'points': 50},
+      ]);
+
+      // Transfer points from public schema user to custom schema user
+      final result = await mockSupabase.rpc('transfer_points_between_schemas',
+          params: {'from_user_id': 1, 'to_user_id': 1, 'points': 30});
+
+      expect(result, isA<Map<String, dynamic>>());
+      expect(result, containsPair('success', true));
+      expect(result, containsPair('from_user_points', 70));
+      expect(result, containsPair('to_user_points', 80));
+
+      // Verify public schema user was updated
+      final publicUser =
+          await mockSupabase.from('users').select().eq('id', 1).single();
+      expect(publicUser, containsPair('points', 70));
+
+      // Verify custom schema user was updated
+      final customUser = await mockSupabase
+          .schema('custom_schema')
+          .from('users')
+          .select()
+          .eq('id', 1)
+          .single();
+      expect(customUser, containsPair('points', 80));
+    });
+
+    test('RPC function fails when transferring more points than available',
+        () async {
+      // Insert initial data in public schema
+      await mockSupabase.from('users').insert([
+        {'id': 1, 'name': 'Alice', 'points': 100},
+      ]);
+
+      // Insert initial data in custom schema
+      await mockSupabase.schema('custom_schema').from('users').insert([
+        {'id': 1, 'name': 'Bob', 'points': 50},
+      ]);
+
+      // Attempt to transfer more points than available
+      final result = await mockSupabase.rpc('transfer_points_between_schemas',
+          params: {'from_user_id': 1, 'to_user_id': 1, 'points': 150});
+
+      expect(result, isA<Map<String, dynamic>>());
+      expect(result, containsPair('success', false));
+
+      // Verify no changes were made to either user
+      final publicUser =
+          await mockSupabase.from('users').select().eq('id', 1).single();
+      expect(publicUser, containsPair('points', 100));
+
+      final customUser = await mockSupabase
+          .schema('custom_schema')
+          .from('users')
+          .select()
+          .eq('id', 1)
+          .single();
+      expect(customUser, containsPair('points', 50));
     });
   });
 }
