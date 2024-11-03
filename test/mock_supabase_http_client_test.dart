@@ -3,8 +3,8 @@ import 'package:supabase/supabase.dart';
 import 'package:test/test.dart';
 
 void main() {
-  late final SupabaseClient mockSupabase;
-  late final MockSupabaseHttpClient mockHttpClient;
+  late SupabaseClient mockSupabase;
+  late MockSupabaseHttpClient mockHttpClient;
 
   setUpAll(() {
     // Initialize the mock HTTP client and Supabase client
@@ -40,12 +40,14 @@ void main() {
       await mockSupabase
           .from('posts')
           .upsert({'id': 1, 'title': 'Initial post'});
+      final posts = await mockSupabase.from('posts').select();
+      expect(posts.first, {'id': 1, 'title': 'Initial post'});
       await mockSupabase
           .from('posts')
           .upsert({'id': 1, 'title': 'Updated post'});
-      final posts = await mockSupabase.from('posts').select();
-      expect(posts.length, 1);
-      expect(posts.first, {'id': 1, 'title': 'Updated post'});
+      final postsUfterUpdate = await mockSupabase.from('posts').select();
+      expect(postsUfterUpdate.length, 1);
+      expect(postsUfterUpdate.first, {'id': 1, 'title': 'Updated post'});
     });
 
     test('Update', () async {
@@ -1152,6 +1154,294 @@ void main() {
           .eq('id', 1)
           .single();
       expect(customUser, containsPair('points', 50));
+    });
+  });
+
+  group('mock exceptions', () {
+    group('basic operation exceptions', () {
+      test('select throws PostgrestException', () async {
+        mockHttpClient = MockSupabaseHttpClient(
+          errorTrigger: (schema, table, data, type) {
+            if (type == RequestType.select) {
+              throw PostgrestException(
+                code: '400',
+                message: 'Error during select',
+              );
+            }
+          },
+        );
+        mockSupabase = SupabaseClient(
+          'https://mock.supabase.co',
+          'supabaseKey',
+          httpClient: mockHttpClient,
+        );
+
+        try {
+          await mockSupabase.from('users').select();
+          fail('Expected PostgrestException to be thrown');
+        } catch (error) {
+          expect(error, isA<PostgrestException>());
+          expect((error as PostgrestException).code, '400');
+          expect(error.message, 'Error during select');
+        }
+      });
+
+      test('insert throws PostgrestException', () async {
+        mockHttpClient = MockSupabaseHttpClient(
+          errorTrigger: (schema, table, data, type) {
+            if (type == RequestType.insert) {
+              throw PostgrestException(
+                code: '409',
+                message: 'Duplicate key violation',
+              );
+            }
+          },
+        );
+        mockSupabase = SupabaseClient(
+          'https://mock.supabase.co',
+          'supabaseKey',
+          httpClient: mockHttpClient,
+        );
+
+        try {
+          await mockSupabase.from('users').insert({'id': 1, 'name': 'Test'});
+          fail('Expected PostgrestException to be thrown');
+        } catch (error) {
+          expect(error, isA<PostgrestException>());
+          expect((error as PostgrestException).code, '409');
+          expect(error.message, 'Duplicate key violation');
+        }
+      });
+
+      test('update throws PostgrestException', () async {
+        mockHttpClient = MockSupabaseHttpClient(
+          errorTrigger: (schema, table, data, type) {
+            if (type == RequestType.update) {
+              throw PostgrestException(
+                code: '404',
+                message: 'Record not found',
+              );
+            }
+          },
+        );
+        mockSupabase = SupabaseClient(
+          'https://mock.supabase.co',
+          'supabaseKey',
+          httpClient: mockHttpClient,
+        );
+
+        try {
+          await mockSupabase
+              .from('users')
+              .update({'name': 'Updated'}).eq('id', 999);
+          fail('Expected PostgrestException to be thrown');
+        } catch (error) {
+          expect(error, isA<PostgrestException>());
+          expect((error as PostgrestException).code, '404');
+          expect(error.message, 'Record not found');
+        }
+      });
+
+      test('delete throws PostgrestException', () async {
+        mockHttpClient = MockSupabaseHttpClient(
+          errorTrigger: (schema, table, data, type) {
+            if (type == RequestType.delete) {
+              throw PostgrestException(
+                code: '403',
+                message: 'Permission denied',
+              );
+            }
+          },
+        );
+        mockSupabase = SupabaseClient(
+          'https://mock.supabase.co',
+          'supabaseKey',
+          httpClient: mockHttpClient,
+        );
+
+        try {
+          await mockSupabase.from('users').delete().eq('id', 1);
+          fail('Expected PostgrestException to be thrown');
+        } catch (error) {
+          expect(error, isA<PostgrestException>());
+          expect((error as PostgrestException).code, '403');
+          expect(error.message, 'Permission denied');
+        }
+      });
+
+      test('upsert throws PostgrestException', () async {
+        mockHttpClient = MockSupabaseHttpClient(
+          errorTrigger: (schema, table, data, type) {
+            if (type == RequestType.upsert) {
+              throw PostgrestException(
+                code: '422',
+                message: 'Validation error',
+              );
+            }
+          },
+        );
+        mockSupabase = SupabaseClient(
+          'https://mock.supabase.co',
+          'supabaseKey',
+          httpClient: mockHttpClient,
+        );
+
+        try {
+          await mockSupabase.from('users').upsert({'id': 1, 'name': 'Test'});
+          fail('Expected PostgrestException to be thrown');
+        } catch (error) {
+          expect(error, isA<PostgrestException>());
+          expect((error as PostgrestException).code, '422');
+          expect(error.message, 'Validation error');
+        }
+      });
+
+      test('rpc throws PostgrestException', () async {
+        mockHttpClient = MockSupabaseHttpClient(
+          errorTrigger: (schema, table, data, type) {
+            if (type == RequestType.rpc) {
+              throw PostgrestException(
+                code: '500',
+                message: 'RPC function error',
+              );
+            }
+          },
+        );
+        mockSupabase = SupabaseClient(
+          'https://mock.supabase.co',
+          'supabaseKey',
+          httpClient: mockHttpClient,
+        );
+
+        try {
+          await mockSupabase.rpc('test_function', params: {'param': 'value'});
+          fail('Expected PostgrestException to be thrown');
+        } catch (error) {
+          expect(error, isA<PostgrestException>());
+          expect((error as PostgrestException).code, '500');
+          expect(error.message, 'RPC function error');
+        }
+      });
+    });
+
+    group('conditional exceptions', () {
+      test('throws when age is negative', () async {
+        mockHttpClient = MockSupabaseHttpClient(
+          errorTrigger: (schema, table, data, type) {
+            if (type == RequestType.insert && data is Map) {
+              if (data['age'] != null && data['age'] < 0) {
+                throw PostgrestException(
+                  code: '400',
+                  message: 'Age cannot be negative',
+                );
+              }
+            }
+          },
+        );
+        mockSupabase = SupabaseClient(
+          'https://mock.supabase.co',
+          'supabaseKey',
+          httpClient: mockHttpClient,
+        );
+
+        try {
+          await mockSupabase.from('users').insert({'name': 'Test', 'age': -1});
+          fail('Expected PostgrestException to be thrown');
+        } catch (error) {
+          expect(error, isA<PostgrestException>());
+          expect((error as PostgrestException).code, '400');
+          expect(error.message, 'Age cannot be negative');
+        }
+      });
+
+      test('throws when email is invalid', () async {
+        mockHttpClient = MockSupabaseHttpClient(
+          errorTrigger: (schema, table, data, type) {
+            if ((type == RequestType.insert || type == RequestType.update) &&
+                data is Map) {
+              if (data['email'] != null && !data['email'].contains('@')) {
+                throw PostgrestException(
+                  code: '422',
+                  message: 'Invalid email format',
+                );
+              }
+            }
+          },
+        );
+        mockSupabase = SupabaseClient(
+          'https://mock.supabase.co',
+          'supabaseKey',
+          httpClient: mockHttpClient,
+        );
+
+        try {
+          await mockSupabase
+              .from('users')
+              .insert({'name': 'Test', 'email': 'invalid-email'});
+          fail('Expected PostgrestException to be thrown');
+        } catch (error) {
+          expect(error, isA<PostgrestException>());
+          expect((error as PostgrestException).code, '422');
+          expect(error.message, 'Invalid email format');
+        }
+      });
+
+      test('throws when table does not exist', () async {
+        mockHttpClient = MockSupabaseHttpClient(
+          errorTrigger: (schema, table, data, type) {
+            if (table == 'non_existent_table') {
+              throw PostgrestException(
+                code: '404',
+                message: 'Table "non_existent_table" does not exist',
+              );
+            }
+          },
+        );
+        mockSupabase = SupabaseClient(
+          'https://mock.supabase.co',
+          'supabaseKey',
+          httpClient: mockHttpClient,
+        );
+
+        try {
+          await mockSupabase.from('non_existent_table').select();
+          fail('Expected PostgrestException to be thrown');
+        } catch (error) {
+          expect(error, isA<PostgrestException>());
+          expect((error as PostgrestException).code, '404');
+          expect(error.message, 'Table "non_existent_table" does not exist');
+        }
+      });
+
+      test('throws when schema does not exist', () async {
+        mockHttpClient = MockSupabaseHttpClient(
+          errorTrigger: (schema, table, data, type) {
+            if (schema == 'non_existent_schema') {
+              throw PostgrestException(
+                code: '404',
+                message: 'Schema "non_existent_schema" does not exist',
+              );
+            }
+          },
+        );
+        mockSupabase = SupabaseClient(
+          'https://mock.supabase.co',
+          'supabaseKey',
+          httpClient: mockHttpClient,
+        );
+
+        try {
+          await mockSupabase
+              .schema('non_existent_schema')
+              .from('users')
+              .select();
+          fail('Expected PostgrestException to be thrown');
+        } catch (error) {
+          expect(error, isA<PostgrestException>());
+          expect((error as PostgrestException).code, '404');
+          expect(error.message, 'Schema "non_existent_schema" does not exist');
+        }
+      });
     });
   });
 }
