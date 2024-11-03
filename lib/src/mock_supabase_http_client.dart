@@ -13,6 +13,26 @@ class MockSupabaseHttpClient extends BaseClient {
       dynamic Function(Map<String, dynamic>? params,
           Map<String, List<Map<String, dynamic>>> tables)> _rpcFunctions = {};
 
+  /// A function that can be used to trigger errors.
+  ///
+  /// Throw a PostgrestException within the `errorTrigger` to mock an error.
+  ///
+  /// Example:
+  /// ```dart
+  /// final client = MockSupabaseHttpClient(
+  ///   errorTrigger: (schema, table, data, type) {
+  ///     if (table == 'users' && type == RequestType.insert) {
+  ///       throw PostgrestException(
+  ///         message: 'Email already exists', // Provide a message
+  ///         code: '400', // Optionally provide a status code
+  ///         details: 'Key (email)=(test@test.com) already exists', // Optionally provide details
+  ///         hint: 'Change the email address', // Optionally provide a hint
+  ///       );
+  ///     }
+  ///     // The request will succeed otherwise
+  ///   },
+  /// );
+  /// ```
   final void Function(
     String schema,
     String? table,
@@ -28,6 +48,7 @@ class MockSupabaseHttpClient extends BaseClient {
     _rpcHandler = RpcHandler(_rpcFunctions, _database);
   }
 
+  /// Clears the mock database and RPC functions.
   void reset() {
     // Clear the mock database and RPC functions
     _database.clear();
