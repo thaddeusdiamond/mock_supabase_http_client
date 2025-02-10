@@ -1,12 +1,15 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart';
+import 'package:supabase/supabase.dart';
 
 import 'handlers/rpc_handler.dart';
 import 'utils/filter_parser.dart';
 
 class MockSupabaseHttpClient extends BaseClient {
   final Map<String, List<Map<String, dynamic>>> _database = {};
+  final Map<String, FunctionResponse> _registeredFunctions = {};
   final Map<
       String,
       dynamic Function(Map<String, dynamic>? params,
@@ -22,6 +25,7 @@ class MockSupabaseHttpClient extends BaseClient {
     // Clear the mock database and RPC functions
     _database.clear();
     _rpcHandler.reset();
+    _registeredFunctions.clear();
   }
 
   /// Registers a RPC function that can be called using the `rpc` method on a `Postgrest` client.
@@ -106,6 +110,19 @@ class MockSupabaseHttpClient extends BaseClient {
 
   @override
   Future<StreamedResponse> send(BaseRequest request) async {
+    final functionName = _extractFunctionName(request.url);
+    if (functionName != null) {
+      if (_registeredFunctions.containsKey(functionName)) {
+        return _handleFunctionInvocation(functionName, request);
+      } else {
+        return _createResponse(
+          {'error': 'Function $functionName not found'},
+          statusCode: 404,
+          request: request,
+        );
+      }
+    }
+
     // Decode the request body if it's not a GET, DELETE, or HEAD request
     dynamic body;
     if (request.method != 'GET' &&
@@ -634,5 +651,69 @@ class MockSupabaseHttpClient extends BaseClient {
       headers: responseHeaders,
       request: request,
     );
+  }
+
+  /// Registers a response for a specific function name.
+  ///
+  /// This method allows you to associate a [FunctionResponse] with a given
+  /// [functionName]. The registered response can later be retrieved or used
+  /// when the function is called.
+  ///
+  /// - Parameters:
+  ///   - functionName: The name of the function to register the response for.
+  ///   - response: The [FunctionResponse] to be associated with the function name.
+  void registerFunctionResponse(
+      String functionName, FunctionResponse response) {
+    _registeredFunctions[functionName] = response;
+  }
+
+  String? _extractFunctionName(Uri url) {
+    final pathSegments = url.pathSegments;
+    // Handle functions endpoint: /functions/v1/{function_name}
+    if (pathSegments.length >= 3 &&
+        pathSegments[0] == 'functions' &&
+        pathSegments[1] == 'v1') {
+      return pathSegments[2];
+    }
+    return null;
+  }
+
+  StreamedResponse _handleFunctionInvocation(
+    String functionName,
+    BaseRequest request,
+  ) {
+    final response = _registeredFunctions[functionName]!;
+    final statusCode = response.status;
+    final data = response.data;
+
+    Stream<List<int>> stream;
+    if (data is Stream<List<int>>) {
+      stream = data;
+    } else if (data is Uint8List) {
+      stream = Stream.value(data);
+    } else if (data is String) {
+      stream = Stream.value(utf8.encode(data));
+    } else {
+      final jsonString = jsonEncode(data);
+      stream = Stream.value(utf8.encode(jsonString));
+    }
+
+    final headers = {
+      'content-type': _getContentType(data),
+    };
+
+    return StreamedResponse(
+      stream,
+      statusCode,
+      headers: headers,
+      request: request,
+    );
+  }
+
+  String _getContentType(dynamic data) {
+    if (data is Uint8List) return 'application/octet-stream';
+    if (data is String) return 'text/plain';
+    if (data is Stream<List<int>>) return 'text/event-stream';
+    return 'application/json';
   }
 }

@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:mock_supabase_http_client/mock_supabase_http_client.dart';
 import 'package:supabase/supabase.dart';
 import 'package:test/test.dart';
@@ -1152,6 +1155,24 @@ void main() {
           .eq('id', 1)
           .single();
       expect(customUser, containsPair('points', 50));
+    });
+  });
+
+  group("Edge functions", () {
+    test('Test function invocation', () async {
+      mockHttpClient.registerFunctionResponse(
+        'hello',
+        FunctionResponse(data: {'message': 'Hello'}, status: 200),
+      );
+
+      final response = await mockSupabase.functions.invoke('hello');
+      expect(response.data, {'message': 'Hello'});
+      expect(response.status, 200);
+    });
+
+    test("invocation failes if function not found", () async {
+      expect(() => mockSupabase.functions.invoke('non_existent_function'),
+          throwsA(isA<FunctionException>()));
     });
   });
 }
