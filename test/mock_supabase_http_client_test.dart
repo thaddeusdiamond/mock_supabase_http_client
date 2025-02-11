@@ -1161,7 +1161,7 @@ void main() {
     group('basic operation exceptions', () {
       test('select throws PostgrestException', () async {
         mockHttpClient = MockSupabaseHttpClient(
-          errorTrigger: (schema, table, data, type) {
+          postgrestExceptionTrigger: (schema, table, data, type) {
             if (type == RequestType.select) {
               throw PostgrestException(
                 code: '400',
@@ -1188,7 +1188,7 @@ void main() {
 
       test('insert throws PostgrestException', () async {
         mockHttpClient = MockSupabaseHttpClient(
-          errorTrigger: (schema, table, data, type) {
+          postgrestExceptionTrigger: (schema, table, data, type) {
             if (type == RequestType.insert) {
               throw PostgrestException(
                 code: '409',
@@ -1215,7 +1215,7 @@ void main() {
 
       test('update throws PostgrestException', () async {
         mockHttpClient = MockSupabaseHttpClient(
-          errorTrigger: (schema, table, data, type) {
+          postgrestExceptionTrigger: (schema, table, data, type) {
             if (type == RequestType.update) {
               throw PostgrestException(
                 code: '404',
@@ -1244,7 +1244,7 @@ void main() {
 
       test('delete throws PostgrestException', () async {
         mockHttpClient = MockSupabaseHttpClient(
-          errorTrigger: (schema, table, data, type) {
+          postgrestExceptionTrigger: (schema, table, data, type) {
             if (type == RequestType.delete) {
               throw PostgrestException(
                 code: '403',
@@ -1271,7 +1271,7 @@ void main() {
 
       test('upsert throws PostgrestException', () async {
         mockHttpClient = MockSupabaseHttpClient(
-          errorTrigger: (schema, table, data, type) {
+          postgrestExceptionTrigger: (schema, table, data, type) {
             if (type == RequestType.upsert) {
               throw PostgrestException(
                 code: '422',
@@ -1298,7 +1298,7 @@ void main() {
 
       test('rpc throws PostgrestException', () async {
         mockHttpClient = MockSupabaseHttpClient(
-          errorTrigger: (schema, table, data, type) {
+          postgrestExceptionTrigger: (schema, table, data, type) {
             if (type == RequestType.rpc) {
               throw PostgrestException(
                 code: '500',
@@ -1327,7 +1327,7 @@ void main() {
     group('conditional exceptions', () {
       test('throws when age is negative', () async {
         mockHttpClient = MockSupabaseHttpClient(
-          errorTrigger: (schema, table, data, type) {
+          postgrestExceptionTrigger: (schema, table, data, type) {
             if (type == RequestType.insert && data is Map) {
               if (data['age'] != null && data['age'] < 0) {
                 throw PostgrestException(
@@ -1356,7 +1356,7 @@ void main() {
 
       test('throws when email is invalid', () async {
         mockHttpClient = MockSupabaseHttpClient(
-          errorTrigger: (schema, table, data, type) {
+          postgrestExceptionTrigger: (schema, table, data, type) {
             if ((type == RequestType.insert || type == RequestType.update) &&
                 data is Map) {
               if (data['email'] != null && !data['email'].contains('@')) {
@@ -1388,7 +1388,7 @@ void main() {
 
       test('throws when table does not exist', () async {
         mockHttpClient = MockSupabaseHttpClient(
-          errorTrigger: (schema, table, data, type) {
+          postgrestExceptionTrigger: (schema, table, data, type) {
             if (table == 'non_existent_table') {
               throw PostgrestException(
                 code: '404',
@@ -1415,7 +1415,7 @@ void main() {
 
       test('throws when schema does not exist', () async {
         mockHttpClient = MockSupabaseHttpClient(
-          errorTrigger: (schema, table, data, type) {
+          postgrestExceptionTrigger: (schema, table, data, type) {
             if (schema == 'non_existent_schema') {
               throw PostgrestException(
                 code: '404',
