@@ -295,9 +295,6 @@ class MockSupabaseHttpClient extends BaseClient {
             schema, table, request.url.queryParameters, request);
       case RequestType.head:
         return _handleHead(schema, table, request.url.queryParameters, request);
-      default:
-        return _createResponse({'error': 'Method not allowed'},
-            statusCode: 405, request: request);
     }
   }
 
