@@ -9,7 +9,14 @@ import 'utils/filter_parser.dart';
 
 class MockSupabaseHttpClient extends BaseClient {
   final Map<String, List<Map<String, dynamic>>> _database = {};
-  final Map<String, FunctionResponse> _registeredFunctions = {};
+  final Map<
+      String,
+      FunctionResponse Function(
+        Map<String, dynamic> body,
+        Map<String, String> queryParameters,
+        HttpMethod method,
+        Map<String, List<Map<String, dynamic>>> tables,
+      )> _edgeFunctions = {};
   final Map<
       String,
       dynamic Function(Map<String, dynamic>? params,
@@ -25,7 +32,7 @@ class MockSupabaseHttpClient extends BaseClient {
     // Clear the mock database and RPC functions
     _database.clear();
     _rpcHandler.reset();
-    _registeredFunctions.clear();
+    _edgeFunctions.clear();
   }
 
   /// Registers a RPC function that can be called using the `rpc` method on a `Postgrest` client.
@@ -112,7 +119,7 @@ class MockSupabaseHttpClient extends BaseClient {
   Future<StreamedResponse> send(BaseRequest request) async {
     final functionName = _extractFunctionName(request.url);
     if (functionName != null) {
-      if (_registeredFunctions.containsKey(functionName)) {
+      if (_edgeFunctions.containsKey(functionName)) {
         return _handleFunctionInvocation(functionName, request);
       } else {
         return _createResponse(
@@ -645,8 +652,20 @@ class MockSupabaseHttpClient extends BaseClient {
       ...?headers,
     };
 
+    Stream<List<int>> stream;
+    if (data is Uint8List) {
+      stream = Stream.value(data);
+      responseHeaders['content-type'] = _getContentType(data);
+    } else if (data is String) {
+      stream = Stream.value(utf8.encode(data));
+      responseHeaders['content-type'] = _getContentType(data);
+    } else {
+      final jsonData = jsonEncode(data);
+      stream = Stream.value(utf8.encode(jsonData));
+    }
+
     return StreamedResponse(
-      Stream.value(utf8.encode(jsonEncode(data))),
+      stream,
       statusCode,
       headers: responseHeaders,
       request: request,
@@ -662,9 +681,16 @@ class MockSupabaseHttpClient extends BaseClient {
   /// - Parameters:
   ///   - functionName: The name of the function to register the response for.
   ///   - response: The [FunctionResponse] to be associated with the function name.
-  void registerFunctionResponse(
-      String functionName, FunctionResponse response) {
-    _registeredFunctions[functionName] = response;
+  void registerEdgeFunction(
+    String name,
+    FunctionResponse Function(
+      Map<String, dynamic> body,
+      Map<String, String> queryParameters,
+      HttpMethod method,
+      Map<String, List<Map<String, dynamic>>> tables,
+    ) handler,
+  ) {
+    _edgeFunctions[name] = handler;
   }
 
   String? _extractFunctionName(Uri url) {
@@ -678,36 +704,63 @@ class MockSupabaseHttpClient extends BaseClient {
     return null;
   }
 
-  StreamedResponse _handleFunctionInvocation(
+  Future<StreamedResponse> _handleFunctionInvocation(
     String functionName,
     BaseRequest request,
-  ) {
-    final response = _registeredFunctions[functionName]!;
-    final statusCode = response.status;
-    final data = response.data;
-
-    Stream<List<int>> stream;
-    if (data is Stream<List<int>>) {
-      stream = data;
-    } else if (data is Uint8List) {
-      stream = Stream.value(data);
-    } else if (data is String) {
-      stream = Stream.value(utf8.encode(data));
-    } else {
-      final jsonString = jsonEncode(data);
-      stream = Stream.value(utf8.encode(jsonString));
+  ) async {
+    if (!_edgeFunctions.containsKey(functionName)) {
+      return _createResponse(
+        {'error': 'Edge function $functionName not found'},
+        statusCode: 404,
+        request: request,
+      );
     }
 
-    final headers = {
-      'content-type': _getContentType(data),
-    };
+    // Parse request data
+    final tables = _database;
+    final body = await _parseRequestBody(request);
+    final queryParams = request.url.queryParameters;
+    final method = _parseMethod(request.method);
 
-    return StreamedResponse(
-      stream,
-      statusCode,
-      headers: headers,
-      request: request,
+    // Call handler
+    final response = _edgeFunctions[functionName]!(
+      body ?? {},
+      queryParams,
+      method,
+      tables,
     );
+
+    return _createResponse(
+      response.data,
+      statusCode: response.status,
+      request: request,
+      headers: {
+        'content-type': _getContentType(response.data),
+      },
+    );
+  }
+
+  Future<dynamic> _parseRequestBody(BaseRequest request) async {
+    if (request is! Request) return null;
+    final content = await request.finalize().transform(utf8.decoder).join();
+    return content.isEmpty ? null : jsonDecode(content);
+  }
+
+  HttpMethod _parseMethod(String method) {
+    switch (method.toUpperCase()) {
+      case 'GET':
+        return HttpMethod.get;
+      case 'POST':
+        return HttpMethod.post;
+      case 'PATCH':
+        return HttpMethod.patch;
+      case 'DELETE':
+        return HttpMethod.delete;
+      case 'PUT':
+        return HttpMethod.put;
+      default:
+        return HttpMethod.get;
+    }
   }
 
   String _getContentType(dynamic data) {
