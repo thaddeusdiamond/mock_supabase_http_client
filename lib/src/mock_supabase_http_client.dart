@@ -7,6 +7,74 @@ import 'package:supabase/supabase.dart';
 import 'handlers/rpc_handler.dart';
 import 'utils/filter_parser.dart';
 
+/// {@template mock_supabase_http_client}
+/// A mock HTTP client for testing Supabase applications that simulates
+/// a Supabase API requests and responses by storing data in memory.
+///
+/// This client implements all the core Supabase operations including:
+/// * CRUD operations with filters and transformers
+/// * RPC functions
+/// * Custom error simulation
+///
+/// Example usage:
+/// ```dart
+/// final client = MockSupabaseHttpClient();
+///
+/// // Create a Supabase client with the mock HTTP client
+/// final supabase = SupabaseClient(
+///   'https://mock.supabase.co',
+///   'mock-key',
+///   httpClient: client,
+/// );
+///
+/// // Insert data
+/// await supabase.from('users').insert({
+///   'id': 1,
+///   'name': 'Alice',
+///   'email': 'alice@example.com'
+/// });
+///
+/// // Query data
+/// final users = await supabase
+///   .from('users')
+///   .select()
+///   .eq('name', 'Alice');
+/// ```
+///
+/// The mock client maintains an in-memory database represented as:
+/// ```dart
+/// {
+///   'public.users': [
+///     {'id': 1, ...},
+///     ...
+///   ]
+/// }
+/// ```
+///
+/// You can simulate errors using the [postgrestExceptionTrigger] callback:
+/// ```dart
+/// final client = MockSupabaseHttpClient(
+///   postgrestExceptionTrigger: (schema, table, data, type) {
+///     if (table == 'users' && type == RequestType.insert) {
+///       throw PostgrestException(
+///         message: 'Email already exists',
+///         code: '400',
+///       );
+///     }
+///   },
+/// );
+/// ```
+///
+/// The client supports custom RPC functions through [registerRpcFunction]:
+/// ```dart
+/// client.registerRpcFunction(
+///   'get_user_status',
+///   (params, tables) => {'status': 'active'},
+/// );
+/// ```
+///
+/// A mock HTTP client that simulates Supabase backend operations for testing.
+/// {@endtemplate}
 class MockSupabaseHttpClient extends BaseClient {
   final Map<String, List<Map<String, dynamic>>> _database = {};
   final Map<
@@ -22,12 +90,43 @@ class MockSupabaseHttpClient extends BaseClient {
       dynamic Function(Map<String, dynamic>? params,
           Map<String, List<Map<String, dynamic>>> tables)> _rpcFunctions = {};
 
+  /// A function that can be used to trigger errors.
+  ///
+  /// Throw a PostgrestException within the `postgrestExceptionTrigger` to mock an error.
+  ///
+  /// Example:
+  /// ```dart
+  /// final client = MockSupabaseHttpClient(
+  ///   postgrestExceptionTrigger: (schema, table, data, type) {
+  ///     if (table == 'users' && type == RequestType.insert) {
+  ///       throw PostgrestException(
+  ///         message: 'Email already exists', // Provide a message
+  ///         code: '400', // Optionally provide a status code
+  ///         details: 'Key (email)=(test@test.com) already exists', // Optionally provide details
+  ///         hint: 'Change the email address', // Optionally provide a hint
+  ///       );
+  ///     }
+  ///     // The request will succeed otherwise
+  ///   },
+  /// );
+  /// ```
+  final void Function(
+    String schema,
+    String? table,
+    dynamic data,
+    RequestType type,
+  )? postgrestExceptionTrigger;
+
   late final RpcHandler _rpcHandler;
 
-  MockSupabaseHttpClient() {
+  /// {@macro mock_supabase_http_client}
+  MockSupabaseHttpClient({
+    this.postgrestExceptionTrigger,
+  }) {
     _rpcHandler = RpcHandler(_rpcFunctions, _database);
   }
 
+  /// Clears the mock database and RPC functions.
   void reset() {
     // Clear the mock database and RPC functions
     _database.clear();
@@ -143,58 +242,87 @@ class MockSupabaseHttpClient extends BaseClient {
       }
     }
 
-    // Extract the table name or RPC function name from the URL
-    final pathSegments = request.url.pathSegments;
-    final restIndex = pathSegments.indexOf('v1');
-    if (restIndex != -1 && restIndex < pathSegments.length - 1) {
-      final resourceName = pathSegments[restIndex + 1];
+    // Determine request type based on method and headers
+    final RequestType requestType;
+    if (request.method == 'HEAD') {
+      requestType = RequestType.head;
+    } else
 
-      if (resourceName == 'rpc') {
-        // Handle RPC call
-        if (pathSegments.length > restIndex + 2) {
-          final functionName = pathSegments[restIndex + 2];
-          return _rpcHandler.handleRpc(functionName, request, body);
-        } else {
-          return _createResponse({'error': 'RPC function name not provided'},
-              statusCode: 400, request: request);
-        }
+    // Check for RPC first
+    if (request.url.pathSegments.contains('rpc')) {
+      requestType = RequestType.rpc;
+    } else if (request.method == 'GET') {
+      requestType = RequestType.select;
+    } else if (request.method == 'POST') {
+      final preferHeader = request.headers['Prefer'];
+      if (preferHeader != null &&
+          preferHeader.contains('resolution=merge-duplicates')) {
+        requestType = RequestType.upsert;
       } else {
-        // Handle regular database operations
-        final tableName = _extractTableName(
-          url: request.url,
-          headers: request.headers,
-          method: request.method,
-        );
-
-        // Handle different HTTP methods
-        switch (request.method) {
-          case 'POST':
-            // Handle upsert if the Prefer header is set
-            final preferHeader = request.headers['Prefer'];
-            if (preferHeader != null &&
-                preferHeader.contains('resolution=merge-duplicates')) {
-              return _handleUpsert(tableName, body, request);
-            }
-            return _handleInsert(tableName, body, request);
-          case 'PATCH':
-            return _handleUpdate(tableName, body, request);
-          case 'DELETE':
-            return _handleDelete(tableName, body, request);
-          case 'GET':
-            return _handleSelect(
-                tableName, request.url.queryParameters, request);
-          case 'HEAD':
-            return _handleHead(tableName, request.url.queryParameters, request);
-          default:
-            return _createResponse({'error': 'Method not allowed'},
-                statusCode: 405, request: request);
-        }
+        requestType = RequestType.insert;
       }
+    } else if (request.method == 'PATCH') {
+      requestType = RequestType.update;
+    } else if (request.method == 'DELETE') {
+      requestType = RequestType.delete;
+    } else {
+      throw UnimplementedError('HTTP method ${request.method} not supported');
     }
-    throw Exception('Invalid URL format: unable to extract table name');
+
+    // Handle regular database operations
+    final (:schema, :table) = _extractTableName(
+      url: request.url,
+      headers: request.headers,
+      method: request.method,
+    );
+
+    try {
+      postgrestExceptionTrigger?.call(
+        schema,
+        table,
+        body,
+        requestType,
+      );
+    } on PostgrestException catch (error) {
+      return _createResponse(
+        error.message,
+        statusCode: int.parse(error.code ?? '500'),
+        request: request,
+      );
+    } catch (error) {
+      return _createResponse(
+        error.toString(),
+        statusCode: 500,
+        request: request,
+      );
+    }
+
+    // Handle different HTTP methods
+    switch (requestType) {
+      case RequestType.rpc:
+        final pathSegments = request.url.pathSegments;
+        final restIndex = pathSegments.indexOf('v1');
+        final functionName = pathSegments[restIndex + 2];
+        return _rpcHandler.handleRpc(functionName, request, body);
+
+      case RequestType.insert:
+        return _handleInsert(schema, table, body, request);
+      case RequestType.upsert:
+        return _handleUpsert(schema, table, body, request);
+      case RequestType.update:
+        return _handleUpdate(schema, table, body, request);
+      case RequestType.delete:
+        return _handleDelete(schema, table, body, request);
+      case RequestType.select:
+        return _handleSelect(
+            schema, table, request.url.queryParameters, request);
+      case RequestType.head:
+        return _handleHead(schema, table, request.url.queryParameters, request);
+    }
   }
 
-  String _extractTableName({
+  /// Extracts the schema and table name from the URL in `schema.table` format
+  ({String schema, String table}) _extractTableName({
     required Uri url,
     required Map<String, String> headers,
     required String method,
@@ -206,40 +334,40 @@ class MockSupabaseHttpClient extends BaseClient {
       final tableName = pathSegments[restIndex + 1];
 
       // Extract custom schema from headers
-      String? customSchema;
+      String schemaName = 'public';
       if (method == 'GET' || method == 'HEAD') {
-        customSchema = headers['Accept-Profile'];
+        schemaName = headers['Accept-Profile'] ?? 'public';
       } else {
-        customSchema = headers['Content-Profile'];
+        schemaName = headers['Content-Profile'] ?? 'public';
       }
 
-      // Prepend custom schema if present
-      if (customSchema != null && customSchema.isNotEmpty) {
-        return '$customSchema.$tableName';
-      }
-
-      return tableName;
+      return (schema: schemaName, table: tableName);
     }
     throw Exception('Invalid URL format: unable to extract table name');
   }
 
   StreamedResponse _handleInsert(
-      String tableName, dynamic data, BaseRequest request) {
+    String schema,
+    String table,
+    dynamic data,
+    BaseRequest request,
+  ) {
+    final tableKey = '$schema.$table';
     // Handle inserting data into the mock database
     if (data == null) {
       return _createResponse({'error': 'No data provided'},
           statusCode: 400, request: request);
     }
-    if (!_database.containsKey(tableName)) {
-      _database[tableName] = [];
+    if (!_database.containsKey(tableKey)) {
+      _database[tableKey] = [];
     }
     if (data is Map<String, dynamic>) {
-      _database[tableName]!.add(data);
+      _database[tableKey]!.add(data);
       return _createResponse(data, request: request);
     } else if (data is List) {
       final List<Map<String, dynamic>> items =
           List<Map<String, dynamic>>.from(data);
-      _database[tableName]!.addAll(items);
+      _database[tableKey]!.addAll(items);
       return _createResponse(items, request: request);
     } else {
       return _createResponse({'error': 'Invalid data format'},
@@ -248,7 +376,12 @@ class MockSupabaseHttpClient extends BaseClient {
   }
 
   StreamedResponse _handleUpdate(
-      String tableName, dynamic data, BaseRequest request) {
+    String schema,
+    String table,
+    dynamic data,
+    BaseRequest request,
+  ) {
+    final tableKey = '$schema.$table';
     // Handle updating data in the mock database
     if (data == null) {
       return _createResponse({'error': 'No data provided'},
@@ -264,8 +397,8 @@ class MockSupabaseHttpClient extends BaseClient {
     var updated = false;
 
     // Update items that match the filters
-    if (_database.containsKey(tableName)) {
-      for (var row in _database[tableName]!) {
+    if (_database.containsKey(tableKey)) {
+      for (var row in _database[tableKey]!) {
         if (_matchesFilters(row: row, filters: queryParams)) {
           row.addAll(data);
           updated = true;
@@ -299,14 +432,19 @@ class MockSupabaseHttpClient extends BaseClient {
   }
 
   StreamedResponse _handleUpsert(
-      String tableName, dynamic data, BaseRequest request) {
+    String schema,
+    String table,
+    dynamic data,
+    BaseRequest request,
+  ) {
+    final tableKey = '$schema.$table';
     // Handle upserting data into the mock database
     if (data == null) {
       return _createResponse({'error': 'No data provided'},
           statusCode: 400, request: request);
     }
-    if (!_database.containsKey(tableName)) {
-      _database[tableName] = [];
+    if (!_database.containsKey(tableKey)) {
+      _database[tableKey] = [];
     }
 
     // Convert data to a list of items
@@ -319,16 +457,16 @@ class MockSupabaseHttpClient extends BaseClient {
       final id = item['id'];
       if (id != null) {
         final index =
-            _database[tableName]!.indexWhere((dbItem) => dbItem['id'] == id);
+            _database[tableKey]!.indexWhere((dbItem) => dbItem['id'] == id);
         if (index != -1) {
-          _database[tableName]![index] = {
-            ..._database[tableName]![index],
+          _database[tableKey]![index] = {
+            ..._database[tableKey]![index],
             ...item
           };
-          return _database[tableName]![index];
+          return _database[tableKey]![index];
         }
       }
-      _database[tableName]!.add(item);
+      _database[tableKey]!.add(item);
       return item;
     }).toList();
 
@@ -336,7 +474,12 @@ class MockSupabaseHttpClient extends BaseClient {
   }
 
   StreamedResponse _handleDelete(
-      String tableName, dynamic data, BaseRequest request) {
+    String schema,
+    String table,
+    dynamic data,
+    BaseRequest request,
+  ) {
+    final tableKey = '$schema.$table';
     // Handle deleting data from the mock database
     final queryParams = request.url.queryParameters;
     if (queryParams.isEmpty) {
@@ -344,8 +487,8 @@ class MockSupabaseHttpClient extends BaseClient {
           statusCode: 400, request: request);
     }
 
-    if (_database.containsKey(tableName)) {
-      _database[tableName]!.removeWhere(
+    if (_database.containsKey(tableKey)) {
+      _database[tableKey]!.removeWhere(
           (row) => _matchesFilters(row: row, filters: queryParams));
     }
 
@@ -353,16 +496,18 @@ class MockSupabaseHttpClient extends BaseClient {
   }
 
   StreamedResponse _handleSelect(
-    String tableName,
+    String schema,
+    String table,
     Map<String, String> queryParams,
     BaseRequest request,
   ) {
+    final tableKey = '$schema.$table';
     // Handle selecting data from the mock database
-    if (!_database.containsKey(tableName)) {
+    if (!_database.containsKey(tableKey)) {
       return _createResponse([], request: request);
     }
 
-    var returningRows = List<Map<String, dynamic>>.from(_database[tableName]!);
+    var returningRows = List<Map<String, dynamic>>.from(_database[tableKey]!);
 
     // Handle basic filtering
     queryParams.forEach((key, value) {
@@ -555,7 +700,7 @@ class MockSupabaseHttpClient extends BaseClient {
 
       return _createResponse(returningRows, request: request, headers: {
         'content-range': '$offset-${offset + returningRows.length}/$countValue',
-        'content-profile': tableName,
+        'content-profile': tableKey,
         'preference-applied': 'count=$countType'
       });
     }
@@ -589,10 +734,15 @@ class MockSupabaseHttpClient extends BaseClient {
   }
 
   StreamedResponse _handleHead(
-      String tableName, Map<String, String> queryParams, BaseRequest request) {
+    String schema,
+    String table,
+    Map<String, String> queryParams,
+    BaseRequest request,
+  ) {
+    final tableKey = '$schema.$table';
     // Perform the same filtering as in _handleSelect
     var returningRows =
-        List<Map<String, dynamic>>.from(_database[tableName] ?? []);
+        List<Map<String, dynamic>>.from(_database[tableKey] ?? []);
 
     // Apply filters (you may want to extract this to a separate method)
     queryParams.forEach((key, value) {
@@ -625,7 +775,7 @@ class MockSupabaseHttpClient extends BaseClient {
         200,
         headers: {
           'content-range': '0-$count/$count',
-          'content-profile': tableName,
+          'content-profile': tableKey,
           'preference-applied': 'count=$countType'
         },
         request: request,
@@ -637,21 +787,22 @@ class MockSupabaseHttpClient extends BaseClient {
       Stream.value([]), // Empty body for HEAD request
       200,
       headers: {
-        'content-profile': tableName,
+        'content-profile': tableKey,
       },
       request: request,
     );
   }
 
-  StreamedResponse _createResponse(dynamic data,
-      {int statusCode = 200,
-      required BaseRequest request,
-      Map<String, String>? headers}) {
+  StreamedResponse _createResponse(
+    dynamic data, {
+    int statusCode = 200,
+    required BaseRequest request,
+    Map<String, String>? headers,
+  }) {
     final responseHeaders = {
       'content-type': 'application/json; charset=utf-8',
       ...?headers,
     };
-
     Stream<List<int>> stream;
     if (data is Uint8List) {
       stream = Stream.value(data);
@@ -769,4 +920,28 @@ class MockSupabaseHttpClient extends BaseClient {
     if (data is Stream<List<int>>) return 'text/event-stream';
     return 'application/json';
   }
+}
+
+/// Represents the different types of HTTP requests that can be made to the Supabase API
+enum RequestType {
+  /// Represents a SELECT query to retrieve data from a table
+  select,
+
+  /// Represents an INSERT query to add new data to a table
+  insert,
+
+  /// Represents an UPDATE query to modify existing data in a table
+  update,
+
+  /// Represents a DELETE query to remove data from a table
+  delete,
+
+  /// Represents an UPSERT query to insert or update data in a table
+  upsert,
+
+  /// Represents a HEAD request to get metadata without retrieving data
+  head,
+
+  /// Represents a Remote Procedure Call (RPC) to execute custom functions
+  rpc,
 }
