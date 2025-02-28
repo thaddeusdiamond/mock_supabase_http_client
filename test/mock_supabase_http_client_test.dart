@@ -86,6 +86,17 @@ void main() {
       final posts = await mockSupabase.from('posts').select();
       expect(posts.length, 0);
     });
+
+    test('Delete then select', () async {
+      // Test deleting a record
+      await mockSupabase
+          .from('posts')
+          .insert({'id': 1, 'title': 'To be deleted'});
+      final posts =
+          await mockSupabase.from('posts').delete().eq('id', 1).select();
+      expect(posts.length, 1);
+    });
+
     test('Select all columns', () async {
       // Test selecting all records
       await mockSupabase.from('posts').insert([

@@ -468,12 +468,18 @@ class MockSupabaseHttpClient extends BaseClient {
           statusCode: 400, request: request);
     }
 
+    List removedItems = [];
     if (_database.containsKey(tableKey)) {
-      _database[tableKey]!.removeWhere(
-          (row) => _matchesFilters(row: row, filters: queryParams));
+      _database[tableKey]!.removeWhere((row) {
+        final matched = _matchesFilters(row: row, filters: queryParams);
+        if (matched) {
+          removedItems.add(row);
+        }
+        return matched;
+      });
     }
 
-    return _createResponse({'message': 'Deleted'}, request: request);
+    return _createResponse(removedItems, request: request);
   }
 
   StreamedResponse _handleSelect(
