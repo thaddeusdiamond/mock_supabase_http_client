@@ -92,9 +92,11 @@ void main() {
       await mockSupabase
           .from('posts')
           .insert({'id': 1, 'title': 'To be deleted'});
-      final posts =
+      final deleted =
           await mockSupabase.from('posts').delete().eq('id', 1).select();
-      expect(posts.length, 1);
+      expect(deleted.length, 1);
+      final posts = await mockSupabase.from('posts').select();
+      expect(posts.length, 0);
     });
 
     test('Select all columns', () async {
