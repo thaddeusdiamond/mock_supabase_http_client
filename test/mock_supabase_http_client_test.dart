@@ -35,6 +35,15 @@ void main() {
       expect(posts.first, {'title': 'Hello, world!'});
     });
 
+    test('Insert then select', () async {
+      // Test inserting a record
+      final posts = await mockSupabase
+          .from('posts')
+          .insert({'title': 'Hello, world!'}).select();
+      expect(posts.length, 1);
+      expect(posts.first, {'title': 'Hello, world!'});
+    });
+
     test('Upsert', () async {
       // Test upserting a record
       await mockSupabase

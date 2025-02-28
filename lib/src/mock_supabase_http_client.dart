@@ -338,9 +338,10 @@ class MockSupabaseHttpClient extends BaseClient {
     if (!_database.containsKey(tableKey)) {
       _database[tableKey] = [];
     }
+
     if (data is Map<String, dynamic>) {
       _database[tableKey]!.add(data);
-      return _createResponse(data, request: request);
+      return _createResponse([data], request: request);
     } else if (data is List) {
       final List<Map<String, dynamic>> items =
           List<Map<String, dynamic>>.from(data);
