@@ -373,18 +373,22 @@ class MockSupabaseHttpClient extends BaseClient {
     final queryParams = request.url.queryParameters;
     var updated = false;
 
+    // Track updated rows
+    final updatedRows = [];
+
     // Update items that match the filters
     if (_database.containsKey(tableKey)) {
       for (var row in _database[tableKey]!) {
         if (_matchesFilters(row: row, filters: queryParams)) {
           row.addAll(data);
           updated = true;
+          updatedRows.add(row);
         }
       }
     }
 
     if (updated) {
-      return _createResponse(data, request: request);
+      return _createResponse(updatedRows, request: request);
     } else {
       return _createResponse({'error': 'Not found'},
           statusCode: 404, request: request);

@@ -63,6 +63,20 @@ void main() {
       expect(posts.first, {'id': 1, 'title': 'Updated title'});
     });
 
+    test('Update then select', () async {
+      // Test updating a record
+      await mockSupabase
+          .from('posts')
+          .insert({'id': 1, 'title': 'Original title'});
+      final posts = await mockSupabase
+          .from('posts')
+          .update({'title': 'Updated title'})
+          .eq('id', 1)
+          .select();
+      expect(posts.length, 1);
+      expect(posts.first, {'id': 1, 'title': 'Updated title'});
+    });
+
     test('Delete', () async {
       // Test deleting a record
       await mockSupabase
