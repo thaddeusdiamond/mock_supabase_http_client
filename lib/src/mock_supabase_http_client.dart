@@ -51,6 +51,20 @@ import 'utils/filter_parser.dart';
 /// }
 /// ```
 ///
+/// You can mock edge functions using the [registerEdgeFunction] callback:
+/// ```dart
+/// final client = MockSupabaseHttpClient();
+/// client.registerEdgeFunction(
+///  'get_user_status',
+/// (body, queryParameters, method, tables) {
+///  return FunctionResponse(
+///   data: {'status': 'active'},
+///   status: 200,
+/// );
+///
+/// final response = await supabaseClient.functions.invoke('get_user_status');
+/// ```
+///
 /// You can simulate errors using the [postgrestExceptionTrigger] callback:
 /// ```dart
 /// final client = MockSupabaseHttpClient(
@@ -823,15 +837,17 @@ class MockSupabaseHttpClient extends BaseClient {
     );
   }
 
-  /// Registers a response for a specific function name.
+  /// Registers an edge function with the given name and handler.
   ///
-  /// This method allows you to associate a [FunctionResponse] with a given
-  /// [functionName]. The registered response can later be retrieved or used
-  /// when the function is called.
+  /// The [name] parameter specifies the name of the edge function.
   ///
-  /// - Parameters:
-  ///   - functionName: The name of the function to register the response for.
-  ///   - response: The [FunctionResponse] to be associated with the function name.
+  /// The [handler] parameter is a function that takes the following parameters:
+  /// - [body]: A map containing the body of the request.
+  /// - [queryParameters]: A map containing the query parameters of the request.
+  /// - [method]: The HTTP method of the request.
+  /// - [tables]: A map containing lists of maps representing the tables involved in the request.
+  ///
+  /// The [handler] function should return a [FunctionResponse].
   void registerEdgeFunction(
     String name,
     FunctionResponse Function(
