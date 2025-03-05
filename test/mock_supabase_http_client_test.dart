@@ -1295,6 +1295,8 @@ void main() {
       expect(users, [
         {'id': 1, 'name': 'Alice'}
       ]);
+    });
+  });
 
   group('mock exceptions', () {
     group('basic operation exceptions', () {
