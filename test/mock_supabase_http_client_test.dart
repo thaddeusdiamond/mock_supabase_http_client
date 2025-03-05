@@ -35,6 +35,15 @@ void main() {
       expect(posts.first, {'title': 'Hello, world!'});
     });
 
+    test('Insert then select', () async {
+      // Test inserting a record
+      final posts = await mockSupabase
+          .from('posts')
+          .insert({'title': 'Hello, world!'}).select();
+      expect(posts.length, 1);
+      expect(posts.first, {'title': 'Hello, world!'});
+    });
+
     test('Upsert', () async {
       // Test upserting a record
       await mockSupabase
@@ -50,6 +59,20 @@ void main() {
       expect(postsUfterUpdate.first, {'id': 1, 'title': 'Updated post'});
     });
 
+    test('Upsert then select', () async {
+      // Test upserting a record
+      await mockSupabase
+          .from('posts')
+          .upsert({'id': 1, 'title': 'Initial post'});
+      final posts = await mockSupabase.from('posts').select();
+      expect(posts.first, {'id': 1, 'title': 'Initial post'});
+      final postsAfterUpdate = await mockSupabase
+          .from('posts')
+          .upsert({'id': 1, 'title': 'Updated post'}).select();
+      expect(postsAfterUpdate.length, 1);
+      expect(postsAfterUpdate.first, {'id': 1, 'title': 'Updated post'});
+    });
+
     test('Update', () async {
       // Test updating a record
       await mockSupabase
@@ -63,6 +86,20 @@ void main() {
       expect(posts.first, {'id': 1, 'title': 'Updated title'});
     });
 
+    test('Update then select', () async {
+      // Test updating a record
+      await mockSupabase
+          .from('posts')
+          .insert({'id': 1, 'title': 'Original title'});
+      final posts = await mockSupabase
+          .from('posts')
+          .update({'title': 'Updated title'})
+          .eq('id', 1)
+          .select();
+      expect(posts.length, 1);
+      expect(posts.first, {'id': 1, 'title': 'Updated title'});
+    });
+
     test('Delete', () async {
       // Test deleting a record
       await mockSupabase
@@ -72,6 +109,19 @@ void main() {
       final posts = await mockSupabase.from('posts').select();
       expect(posts.length, 0);
     });
+
+    test('Delete then select', () async {
+      // Test deleting a record
+      await mockSupabase
+          .from('posts')
+          .insert({'id': 1, 'title': 'To be deleted'});
+      final deleted =
+          await mockSupabase.from('posts').delete().eq('id', 1).select();
+      expect(deleted.length, 1);
+      final posts = await mockSupabase.from('posts').select();
+      expect(posts.length, 0);
+    });
+
     test('Select all columns', () async {
       // Test selecting all records
       await mockSupabase.from('posts').insert([

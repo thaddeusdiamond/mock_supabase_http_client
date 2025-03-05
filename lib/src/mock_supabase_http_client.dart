@@ -338,9 +338,10 @@ class MockSupabaseHttpClient extends BaseClient {
     if (!_database.containsKey(tableKey)) {
       _database[tableKey] = [];
     }
+
     if (data is Map<String, dynamic>) {
       _database[tableKey]!.add(data);
-      return _createResponse(data, request: request);
+      return _createResponse([data], request: request);
     } else if (data is List) {
       final List<Map<String, dynamic>> items =
           List<Map<String, dynamic>>.from(data);
@@ -373,18 +374,22 @@ class MockSupabaseHttpClient extends BaseClient {
     final queryParams = request.url.queryParameters;
     var updated = false;
 
+    // Track updated rows
+    final updatedRows = [];
+
     // Update items that match the filters
     if (_database.containsKey(tableKey)) {
       for (var row in _database[tableKey]!) {
         if (_matchesFilters(row: row, filters: queryParams)) {
           row.addAll(data);
           updated = true;
+          updatedRows.add(row);
         }
       }
     }
 
     if (updated) {
-      return _createResponse(data, request: request);
+      return _createResponse(updatedRows, request: request);
     } else {
       return _createResponse({'error': 'Not found'},
           statusCode: 404, request: request);
@@ -464,12 +469,18 @@ class MockSupabaseHttpClient extends BaseClient {
           statusCode: 400, request: request);
     }
 
+    List removedItems = [];
     if (_database.containsKey(tableKey)) {
-      _database[tableKey]!.removeWhere(
-          (row) => _matchesFilters(row: row, filters: queryParams));
+      _database[tableKey]!.removeWhere((row) {
+        final matched = _matchesFilters(row: row, filters: queryParams);
+        if (matched) {
+          removedItems.add(row);
+        }
+        return matched;
+      });
     }
 
-    return _createResponse({'message': 'Deleted'}, request: request);
+    return _createResponse(removedItems, request: request);
   }
 
   StreamedResponse _handleSelect(
