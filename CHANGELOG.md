@@ -1,3 +1,7 @@
+## 0.0.3+2
+
+- fix: Error on select after delete or update [#17](https://github.com/supabase-community/mock_supabase_http_client/pull/17)
+
 ## 0.0.3+1
 
 - fix: Add support to datetime on gt. gte. lt. lte. filter [#8](https://github.com/supabase-community/mock_supabase_http_client/pull/8)
