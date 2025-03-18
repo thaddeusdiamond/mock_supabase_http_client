@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart';
 import 'package:supabase/supabase.dart';
@@ -50,6 +51,20 @@ import 'utils/filter_parser.dart';
 /// }
 /// ```
 ///
+/// You can mock edge functions using the [registerEdgeFunction] callback:
+/// ```dart
+/// final client = MockSupabaseHttpClient();
+/// client.registerEdgeFunction(
+///  'get_user_status',
+/// (body, queryParameters, method, tables) {
+///  return FunctionResponse(
+///   data: {'status': 'active'},
+///   status: 200,
+/// );
+///
+/// final response = await supabaseClient.functions.invoke('get_user_status');
+/// ```
+///
 /// You can simulate errors using the [postgrestExceptionTrigger] callback:
 /// ```dart
 /// final client = MockSupabaseHttpClient(
@@ -76,6 +91,14 @@ import 'utils/filter_parser.dart';
 /// {@endtemplate}
 class MockSupabaseHttpClient extends BaseClient {
   final Map<String, List<Map<String, dynamic>>> _database = {};
+  final Map<
+      String,
+      FunctionResponse Function(
+        Map<String, dynamic> body,
+        Map<String, String> queryParameters,
+        HttpMethod method,
+        Map<String, List<Map<String, dynamic>>> tables,
+      )> _edgeFunctions = {};
   final Map<
       String,
       dynamic Function(Map<String, dynamic>? params,
@@ -122,6 +145,7 @@ class MockSupabaseHttpClient extends BaseClient {
     // Clear the mock database and RPC functions
     _database.clear();
     _rpcHandler.reset();
+    _edgeFunctions.clear();
   }
 
   /// Registers a RPC function that can be called using the `rpc` method on a `Postgrest` client.
@@ -206,6 +230,19 @@ class MockSupabaseHttpClient extends BaseClient {
 
   @override
   Future<StreamedResponse> send(BaseRequest request) async {
+    final functionName = _extractFunctionName(request.url);
+    if (functionName != null) {
+      if (_edgeFunctions.containsKey(functionName)) {
+        return _handleFunctionInvocation(functionName, request);
+      } else {
+        return _createResponse(
+          {'error': 'Function $functionName not found'},
+          statusCode: 404,
+          request: request,
+        );
+      }
+    }
+
     // Decode the request body if it's not a GET, DELETE, or HEAD request
     dynamic body;
     if (request.method != 'GET' &&
@@ -791,12 +828,124 @@ class MockSupabaseHttpClient extends BaseClient {
       'content-type': 'application/json; charset=utf-8',
       ...?headers,
     };
+    Stream<List<int>> stream;
+    if (data is Uint8List) {
+      stream = Stream.value(data);
+      responseHeaders['content-type'] = _getContentType(data);
+    } else if (data is String) {
+      stream = Stream.value(utf8.encode(data));
+      responseHeaders['content-type'] = _getContentType(data);
+    } else {
+      final jsonData = jsonEncode(data);
+      stream = Stream.value(utf8.encode(jsonData));
+    }
+
     return StreamedResponse(
-      Stream.value(utf8.encode(data is String ? data : jsonEncode(data))),
+      stream,
       statusCode,
       headers: responseHeaders,
       request: request,
     );
+  }
+
+  /// Registers an edge function with the given name and handler.
+  ///
+  /// The [name] parameter specifies the name of the edge function.
+  ///
+  /// The [handler] parameter is a function that takes the following parameters:
+  /// - [body]: A map containing the body of the request.
+  /// - [queryParameters]: A map containing the query parameters of the request.
+  /// - [method]: The HTTP method of the request.
+  /// - [tables]: A map containing lists of maps representing the tables involved in the request.
+  ///
+  /// The [handler] function should return a [FunctionResponse].
+  void registerEdgeFunction(
+    String name,
+    FunctionResponse Function(
+      Map<String, dynamic> body,
+      Map<String, String> queryParameters,
+      HttpMethod method,
+      Map<String, List<Map<String, dynamic>>> tables,
+    ) handler,
+  ) {
+    _edgeFunctions[name] = handler;
+  }
+
+  String? _extractFunctionName(Uri url) {
+    final pathSegments = url.pathSegments;
+    // Handle functions endpoint: /functions/v1/{function_name}
+    if (pathSegments.length >= 3 &&
+        pathSegments[0] == 'functions' &&
+        pathSegments[1] == 'v1') {
+      return pathSegments[2];
+    }
+    return null;
+  }
+
+  Future<StreamedResponse> _handleFunctionInvocation(
+    String functionName,
+    BaseRequest request,
+  ) async {
+    if (!_edgeFunctions.containsKey(functionName)) {
+      return _createResponse(
+        {'error': 'Edge function $functionName not found'},
+        statusCode: 404,
+        request: request,
+      );
+    }
+
+    // Parse request data
+    final tables = _database;
+    final body = await _parseRequestBody(request);
+    final queryParams = request.url.queryParameters;
+    final method = _parseMethod(request.method);
+
+    // Call handler
+    final response = _edgeFunctions[functionName]!(
+      body ?? {},
+      queryParams,
+      method,
+      tables,
+    );
+
+    return _createResponse(
+      response.data,
+      statusCode: response.status,
+      request: request,
+      headers: {
+        'content-type': _getContentType(response.data),
+      },
+    );
+  }
+
+  Future<dynamic> _parseRequestBody(BaseRequest request) async {
+    if (request is! Request) return null;
+    final content = await request.finalize().transform(utf8.decoder).join();
+    return content.isEmpty ? null : jsonDecode(content);
+  }
+
+  HttpMethod _parseMethod(String method) {
+    switch (method.toUpperCase()) {
+      case 'GET':
+        return HttpMethod.get;
+      case 'POST':
+        return HttpMethod.post;
+      case 'PATCH':
+        return HttpMethod.patch;
+      case 'DELETE':
+        return HttpMethod.delete;
+      case 'PUT':
+        return HttpMethod.put;
+      default:
+        return HttpMethod.get;
+    }
+  }
+
+  String _getContentType(dynamic data) {
+    if (data is Uint8List) return 'application/octet-stream';
+    if (data is String) return 'text/plain';
+    if (data is Stream<List<int>>) return 'text/event-stream';
+    return 'application/json';
   }
 }
 

@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:mock_supabase_http_client/mock_supabase_http_client.dart';
 import 'package:supabase/supabase.dart';
 import 'package:test/test.dart';
@@ -1204,6 +1206,145 @@ void main() {
           .eq('id', 1)
           .single();
       expect(customUser, containsPair('points', 50));
+    });
+  });
+
+  group('Edge Functions Client', () {
+    test('invoke registered edge function with POST', () async {
+      mockHttpClient.registerEdgeFunction('greet',
+          (body, queryParams, method, tables) {
+        return FunctionResponse(
+          data: {'message': 'Hello, ${body['name']}!'},
+          status: 200,
+        );
+      });
+
+      final response = await mockSupabase.functions.invoke(
+        'greet',
+        body: {'name': 'Alice'},
+      );
+
+      expect(response.status, 200);
+      expect(response.data, {'message': 'Hello, Alice!'});
+    });
+
+    test('invoke edge function with different HTTP methods', () async {
+      mockHttpClient.registerEdgeFunction('say-hello',
+          (body, queryParams, method, tables) {
+        final name = switch (method) {
+          HttpMethod.patch => 'Linda',
+          HttpMethod.post => 'Bob',
+          _ => 'Unknown'
+        };
+        return FunctionResponse(
+          data: {'hello': name},
+          status: 200,
+        );
+      });
+
+      var patchResponse = await mockSupabase.functions
+          .invoke('say-hello', method: HttpMethod.patch);
+      expect(patchResponse.data, {'hello': 'Linda'});
+
+      var postResponse = await mockSupabase.functions
+          .invoke('say-hello', method: HttpMethod.post);
+      expect(postResponse.data, {'hello': 'Bob'});
+    });
+
+    test('edge function receives query params and body', () async {
+      mockHttpClient.registerEdgeFunction('params-test',
+          (body, queryParams, method, tables) {
+        final city = queryParams['city'];
+        final street = body['street'] as String;
+        return FunctionResponse(
+          data: {'address': '$street, $city'},
+          status: 200,
+        );
+      });
+
+      final response = await mockSupabase.functions.invoke(
+        'params-test',
+        body: {'street': '123 Main St'},
+        queryParameters: {'city': 'Springfield'},
+      );
+
+      expect(response.data, {'address': '123 Main St, Springfield'});
+    });
+
+    test('edge function returns different content types', () async {
+      mockHttpClient.registerEdgeFunction('binary',
+          (body, queryParams, method, tables) {
+        return FunctionResponse(
+          data: Uint8List.fromList([1, 2, 3]),
+          status: 200,
+        );
+      });
+
+      var response = await mockSupabase.functions.invoke('binary');
+      expect(response.data is Uint8List, true);
+      expect((response.data as Uint8List).length, 3);
+
+      mockHttpClient.registerEdgeFunction('text',
+          (body, queryParams, method, tables) {
+        return FunctionResponse(
+          data: 'Hello, world!',
+          status: 200,
+        );
+      });
+
+      response = await mockSupabase.functions.invoke('text');
+      expect(response.data, 'Hello, world!');
+
+      mockHttpClient.registerEdgeFunction('json',
+          (body, queryParams, method, tables) {
+        return FunctionResponse(
+          data: {'key': 'value'},
+          status: 200,
+        );
+      });
+
+      response = await mockSupabase.functions.invoke('json');
+      expect(response.data, {'key': 'value'});
+    });
+
+    test('invoke non-existent edge function returns 404', () async {
+      expect(
+        () async => await mockSupabase.functions.invoke('not-found'),
+        throwsA(isA<FunctionException>().having(
+          (e) => e.status,
+          'statusCode',
+          404,
+        )),
+      );
+    });
+
+    test('edge function modifies mock database', () async {
+      mockHttpClient.registerEdgeFunction('add-user',
+          (body, queryParams, method, tables) {
+        final users = tables['public.users'] ?? [];
+        final newUser = {
+          'id': users.length + 1,
+          'name': body['name'],
+        };
+        users.add(newUser);
+        tables['public.users'] = users;
+        return FunctionResponse(data: newUser, status: 201);
+      });
+
+      var users = await mockSupabase.from('users').select();
+      expect(users, isEmpty);
+
+      final response = await mockSupabase.functions.invoke(
+        'add-user',
+        body: {'name': 'Alice'},
+      );
+      expect(response.status, 201);
+      expect(response.data, {'id': 1, 'name': 'Alice'});
+
+      users = await mockSupabase.from('users').select();
+      expect(users, [
+        {'id': 1, 'name': 'Alice'}
+      ]);
     });
   });
 
