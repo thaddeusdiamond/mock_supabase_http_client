@@ -380,6 +380,10 @@ void main() {
       final posts =
           await mockSupabase.from('posts').select().inFilter('id', [1, 2]);
       expect(posts.length, 2);
+
+      final strPosts =
+          await mockSupabase.from('posts').select().inFilter('title', ["First post"]);
+      expect(strPosts.length, 1);
     });
     group('Not filters', () {
       setUp(() async {

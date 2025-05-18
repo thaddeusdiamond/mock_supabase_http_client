@@ -68,7 +68,11 @@ class FilterParser {
       return (row) => row[columnName] == null;
     } else if (postrestFilter.startsWith('in.')) {
       final value = postrestFilter.substring(3);
-      final values = value.substring(1, value.length - 1).split(',');
+      final values =
+        value.substring(1, value.length - 1)
+             .split(',')
+             .map((e) => e.replaceAll(RegExp(r'^"|"$'), ''))
+             .toList();
       return (row) => values.contains(row[columnName].toString());
     } else if (postrestFilter.startsWith('cs.')) {
       final value = postrestFilter.substring(3);
